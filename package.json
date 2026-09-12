@@ -29,7 +29,7 @@
     }
   },
   "bin": {
-    "symlink": "./dist/cli.js"
+    "symlink": "dist/cli.js"
   },
   "files": [
     "dist",
