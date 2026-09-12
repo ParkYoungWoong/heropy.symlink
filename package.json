@@ -1,0 +1,58 @@
+{
+  "name": "@heropy/symlink",
+  "version": "1.0.0",
+  "description": "Mirror folders with symbolic links, on every operating system.",
+  "keywords": [
+    "symlink",
+    "symbolic-link",
+    "junction",
+    "mirror",
+    "link",
+    "cli",
+    "agent-skills"
+  ],
+  "license": "MIT",
+  "author": "HEROPY <thesecon@gmail.com> (https://heropy.dev)",
+  "homepage": "https://github.com/ParkYoungWoong/heropy.symlink#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ParkYoungWoong/heropy.symlink.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ParkYoungWoong/heropy.symlink/issues"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "symlink": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.ko.md"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run check && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsdown": "^0.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}
