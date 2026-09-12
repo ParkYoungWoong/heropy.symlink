@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { SymlinkError, symlink, type Item } from '../src/index.js'
+import { SymlinkError, list, symlink, type Item } from '../src/index.js'
 
 let root: string
 let a: string
@@ -217,5 +217,114 @@ describe('symlink', () => {
     const result = await symlink([a, b])
 
     expect(path.isAbsolute(find(result.items, 'one', b)!.target!)).toBe(true)
+  })
+})
+
+describe('list', () => {
+  it('reports every link and where it points', async () => {
+    await makeSkill(a, 'one')
+    await makeSkill(b, 'two')
+    await symlink([a, b])
+
+    const result = await list([root])
+
+    expect(result.links.map((link) => link.name).sort()).toEqual(['one', 'two'])
+    expect(result.counts).toEqual({ total: 2, broken: 0 })
+    const one = result.links.find((link) => link.name === 'one')!
+    expect(one.path).toBe(path.join(b, 'one'))
+    expect(one.destination).toBe(path.join(a, 'one'))
+    expect(one.broken).toBe(false)
+  })
+
+  it('finds links nested deeper than the given folder', async () => {
+    const agents = path.join(root, '.agents', 'skills')
+    const claude = path.join(root, '.claude', 'skills')
+    await fs.mkdir(agents, { recursive: true })
+    await makeSkill(agents, 'one')
+    await symlink([agents, claude])
+
+    const result = await list([root])
+
+    expect(result.links.map((link) => link.path)).toEqual([path.join(claude, 'one')])
+  })
+
+  it('marks a link whose destination is gone', async () => {
+    await makeSkill(a, 'one')
+    await symlink([a, b])
+    await fs.rm(path.join(a, 'one'), { recursive: true })
+
+    const result = await list([b])
+
+    expect(result.counts).toEqual({ total: 1, broken: 1 })
+    expect(result.links[0]!.broken).toBe(true)
+    expect(result.links[0]!.destination).toBe(path.join(a, 'one'))
+  })
+
+  it('reads only, it never creates or removes anything', async () => {
+    await makeSkill(a, 'one')
+    await symlink([a, b])
+
+    await list([root])
+
+    expect(await fs.readdir(a)).toEqual(['one'])
+    expect(await fs.readdir(b)).toEqual(['one'])
+    expect(await isLink(path.join(b, 'one'))).toBe(true)
+  })
+
+  it('reports each link once when a given folder sits inside another', async () => {
+    await makeSkill(a, 'one')
+    await symlink([a, b])
+
+    const result = await list([root, b])
+
+    expect(result.links).toHaveLength(1)
+    expect(result.dirs).toEqual([root])
+  })
+
+  it('handles only the given names', async () => {
+    await makeSkill(a, 'one')
+    await makeSkill(a, 'two')
+    await symlink([a, b])
+
+    const result = await list([root], { only: ['two'] })
+
+    expect(result.links.map((link) => link.name)).toEqual(['two'])
+  })
+
+  it('walks past node_modules and .git', async () => {
+    await makeSkill(a, 'one')
+    await symlink([a, b])
+    for (const noisy of ['node_modules', '.git']) {
+      await fs.mkdir(path.join(root, noisy), { recursive: true })
+      await fs.symlink(a, path.join(root, noisy, 'buried'), 'dir')
+    }
+
+    const result = await list([root])
+
+    expect(result.links.map((link) => link.name)).toEqual(['one'])
+  })
+
+  it('defaults to the current folder', async () => {
+    await makeSkill(a, 'one')
+    await symlink([a, b])
+
+    const result = await list([], { cwd: root })
+
+    expect(result.links.map((link) => link.name)).toEqual(['one'])
+  })
+
+  it('refuses a path that does not exist instead of creating it', async () => {
+    const missing = path.join(root, 'nope')
+
+    await expect(list([missing])).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(fs.stat(missing)).rejects.toBeTruthy()
+  })
+
+  it('refuses a file as an argument', async () => {
+    const file = path.join(root, 'note.txt')
+    await fs.writeFile(file, 'hello')
+
+    await expect(list([file])).rejects.toMatchObject({ code: 'NOT_A_DIRECTORY' })
+    await expect(list([file])).rejects.toBeInstanceOf(SymlinkError)
   })
 })

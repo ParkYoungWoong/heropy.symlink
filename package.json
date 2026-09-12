@@ -1,6 +1,6 @@
 {
   "name": "@heropy/symlink",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Mirror folders with symbolic links, on every operating system.",
   "keywords": [
     "symlink",

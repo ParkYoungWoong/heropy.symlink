@@ -48,7 +48,36 @@ export interface Result {
   counts: Record<ItemStatus, number>
 }
 
-export type ErrorCode = 'INVALID_ARGS' | 'NOT_A_DIRECTORY' | 'SAME_DIRECTORY'
+/** A symbolic link found by `list`. */
+export interface Link {
+  /** Name of the link itself. */
+  name: string
+  /** Absolute path of the link. */
+  path: string
+  /** Link value as written on disk: relative on macOS and Linux, absolute on Windows. */
+  target: string
+  /** Absolute path the link resolves to, whether or not anything is there. */
+  destination: string
+  /** Nothing exists at the destination. */
+  broken: boolean
+}
+
+export interface ListOptions {
+  /** Only report links with these names. */
+  only?: string[]
+  /** Base for relative paths. Defaults to `process.cwd()`. */
+  cwd?: string
+}
+
+export interface ListResult {
+  /** Given directories, resolved to absolute paths and deduplicated. */
+  dirs: string[]
+  /** Every link found, sorted by path. */
+  links: Link[]
+  counts: { total: number; broken: number }
+}
+
+export type ErrorCode = 'INVALID_ARGS' | 'NOT_FOUND' | 'NOT_A_DIRECTORY' | 'SAME_DIRECTORY'
 
 export class SymlinkError extends Error {
   code: ErrorCode
@@ -169,6 +198,87 @@ async function createLink(source: string, link: string, dryRun: boolean) {
   const target = junction ? source : path.relative(path.dirname(link), source)
   if (!dryRun) await fs.symlink(target, link, junction ? 'junction' : 'dir')
   return target
+}
+
+/** Never worth walking into. */
+const IGNORED = new Set(['node_modules', '.git'])
+
+async function resolveDirs(paths: string[], cwd: string) {
+  const dirs: string[] = []
+  const seen = new Set<string>()
+
+  for (const given of paths) {
+    const absolute = path.resolve(cwd, given)
+    const stats = await statOrNull(absolute)
+
+    if (!stats) {
+      throw new SymlinkError('NOT_FOUND', `"${given}" does not exist.`)
+    }
+    if (!stats.isDirectory()) {
+      throw new SymlinkError(
+        'NOT_A_DIRECTORY',
+        `"${given}" is a file. This tool links directories only.`
+      )
+    }
+
+    const key = (await realpathOrNull(absolute)) ?? absolute
+    if (seen.has(key)) continue
+    seen.add(key)
+    dirs.push(absolute)
+  }
+
+  // A directory nested in another given one is already covered by the walk.
+  return dirs.filter((dir) => !dirs.some((other) => other !== dir && isInside(other, dir)))
+}
+
+async function walk(dir: string, only: Set<string> | null, found: Link[]) {
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
+
+  for (const entry of entries) {
+    const absolute = path.join(dir, entry.name)
+
+    if (entry.isSymbolicLink()) {
+      if (only && !only.has(entry.name)) continue
+      const target = stripWindowsPrefix(await fs.readlink(absolute).catch(() => ''))
+      found.push({
+        name: entry.name,
+        path: absolute,
+        target,
+        destination: path.resolve(dir, target),
+        // A link is followed here on purpose: stat reports the destination.
+        broken: (await statOrNull(absolute)) === null
+      })
+      continue
+    }
+
+    // Links are never walked into, so a cycle cannot be entered.
+    if (entry.isDirectory() && !IGNORED.has(entry.name)) await walk(absolute, only, found)
+  }
+}
+
+/**
+ * Walks every given directory and reports the symbolic links inside it, whole
+ * tree, along with where each one points and whether the destination is there.
+ * Nothing is written.
+ *
+ * ```ts
+ * const { links } = await list(['.agents'])
+ * ```
+ */
+export async function list(paths: string[], options: ListOptions = {}): Promise<ListResult> {
+  const { only, cwd = process.cwd() } = options
+  const dirs = await resolveDirs(paths.length ? paths : ['.'], cwd)
+  const filter = only?.length ? new Set(only) : null
+  const links: Link[] = []
+
+  for (const dir of dirs) await walk(dir, filter, links)
+  links.sort((left, right) => left.path.localeCompare(right.path))
+
+  return {
+    dirs,
+    links,
+    counts: { total: links.length, broken: links.filter((link) => link.broken).length }
+  }
 }
 
 /**
